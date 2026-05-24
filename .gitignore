@@ -1,0 +1,8 @@
+.env
+.env.*
+
+/bandwidth-check
+/dist/
+/tmp/
+
+*.log

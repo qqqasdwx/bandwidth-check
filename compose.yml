@@ -1,0 +1,13 @@
+services:
+  bandwidth-check:
+    image: ghcr.io/qqqasdwx/bandwidth-check:latest
+    restart: unless-stopped
+    environment:
+      ROUTER_URL: "http://your-router-address"
+      ROUTER_USERNAME: "admin"
+      ROUTER_PASSWORD: "your-router-password"
+      KUMA_PUSH_URL: "https://kuma.example.com/api/push/your-push-token"
+      WAN_PORT_ALIAS: "ETH_WAN"
+      MIN_SPEED_MBPS: "1000"
+      CHECK_INTERVAL_SECONDS: "60"
+      HTTP_TIMEOUT_SECONDS: "10"

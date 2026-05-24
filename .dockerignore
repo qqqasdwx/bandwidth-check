@@ -1,0 +1,9 @@
+.git
+.github
+.env
+.env.*
+Dockerfile
+README.md
+AGENTS.md
+tmp
+dist
