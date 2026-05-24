@@ -1,5 +1,6 @@
 .env
 .env.*
+compose.override.yml
 
 /bandwidth-check
 /dist/

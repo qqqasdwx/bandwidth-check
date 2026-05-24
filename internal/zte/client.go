@@ -79,7 +79,7 @@ func (c *Client) WANPortStatus(ctx context.Context, alias string) (PortStatus, e
 func (c *Client) Login(ctx context.Context) error {
 	username := c.username
 	if username == "" {
-		initial, err := c.getRaw(ctx, "hiddenScene", "initial_info_json", nil)
+		initial, err := c.getRaw(ctx, "hiddenScene", "initial_info_json", nil, false)
 		if err != nil {
 			return fmt.Errorf("get initial info: %w", err)
 		}
@@ -89,7 +89,7 @@ func (c *Client) Login(ctx context.Context) error {
 		}
 	}
 
-	tokenBody, err := c.getRaw(ctx, "loginsceneData", "login_token_json", nil)
+	tokenBody, err := c.getRaw(ctx, "loginsceneData", "login_token_json", nil, false)
 	if err != nil {
 		return fmt.Errorf("get login token: %w", err)
 	}
@@ -134,35 +134,23 @@ func (c *Client) Login(ctx context.Context) error {
 }
 
 func (c *Client) get(ctx context.Context, dataType, tag string, extra url.Values) ([]byte, error) {
-	return c.getRaw(ctx, dataType, tag, extra)
+	return c.getRaw(ctx, dataType, tag, extra, true)
 }
 
-func (c *Client) getRaw(ctx context.Context, dataType, tag string, extra url.Values) ([]byte, error) {
-	values := url.Values{
-		"_type": {dataType},
-		"_tag":  {tag},
-		"_":     {fmt.Sprintf("%d", time.Now().UnixMilli())},
-	}
-	for key, vals := range extra {
-		for _, val := range vals {
-			values.Add(key, val)
-		}
-	}
-	return c.do(ctx, http.MethodGet, values, nil)
+func (c *Client) getRaw(ctx context.Context, dataType, tag string, extra url.Values, cacheBust bool) ([]byte, error) {
+	query := orderedRouterQuery(dataType, tag, extra, cacheBust)
+	return c.do(ctx, http.MethodGet, query, nil)
 }
 
 func (c *Client) post(ctx context.Context, dataType, tag string, form url.Values) ([]byte, error) {
-	values := url.Values{
-		"_type": {dataType},
-		"_tag":  {tag},
-	}
-	return c.do(ctx, http.MethodPost, values, form)
+	query := orderedRouterQuery(dataType, tag, nil, false)
+	return c.do(ctx, http.MethodPost, query, form)
 }
 
-func (c *Client) do(ctx context.Context, method string, query url.Values, form url.Values) ([]byte, error) {
+func (c *Client) do(ctx context.Context, method string, query string, form url.Values) ([]byte, error) {
 	endpoint := *c.baseURL
 	endpoint.Path = "/"
-	endpoint.RawQuery = query.Encode()
+	endpoint.RawQuery = query
 
 	var body io.Reader
 	if form != nil {
@@ -218,6 +206,22 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func orderedRouterQuery(dataType, tag string, extra url.Values, cacheBust bool) string {
+	parts := []string{
+		"_type=" + url.QueryEscape(dataType),
+		"_tag=" + url.QueryEscape(tag),
+	}
+	for key, vals := range extra {
+		for _, val := range vals {
+			parts = append(parts, url.QueryEscape(key)+"="+url.QueryEscape(val))
+		}
+	}
+	if cacheBust {
+		parts = append(parts, "_="+fmt.Sprintf("%d", time.Now().UnixMilli()))
+	}
+	return strings.Join(parts, "&")
 }
 
 type initialInfoResponse struct {
