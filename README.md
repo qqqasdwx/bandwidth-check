@@ -78,7 +78,7 @@ docker compose up -d
 查看日志：
 
 ```bash
-docker compose logs -f
+docker logs -f bandwidth-check
 ```
 
 ## 本地构建

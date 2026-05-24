@@ -1,5 +1,6 @@
 services:
   bandwidth-check:
+    container_name: bandwidth-check
     image: ghcr.io/qqqasdwx/bandwidth-check:latest
     restart: unless-stopped
     environment:
