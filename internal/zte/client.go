@@ -24,13 +24,25 @@ type Client struct {
 	httpClient   *http.Client
 }
 
+type WANPortResult struct {
+	Port                PortStatus
+	AvailablePorts      []PortStatus
+	SessionReused       bool
+	LoginAttempted      bool
+	InitialLogin        bool
+	RetriedAfterTimeout bool
+	ResponseBytes       int
+	Stage               string
+	Events              []string
+}
+
 func NewClient(routerURL, username, password string, timeout time.Duration) (*Client, error) {
 	parsed, err := url.Parse(routerURL)
 	if err != nil {
 		return nil, err
 	}
 	if parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("router URL must include scheme and host")
+		return nil, fmt.Errorf("路由器地址必须包含协议和主机")
 	}
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -44,36 +56,84 @@ func NewClient(routerURL, username, password string, timeout time.Duration) (*Cl
 	}, nil
 }
 
-func (c *Client) WANPortStatus(ctx context.Context, alias string) (PortStatus, error) {
+func (c *Client) WANPortStatus(ctx context.Context, alias string) (WANPortResult, error) {
+	result := WANPortResult{
+		SessionReused: c.loggedIn,
+		Stage:         "检查会话",
+	}
+	result.addEvent("进入检查，已有会话=%t", c.loggedIn)
 	if !c.loggedIn {
+		result.Stage = "登录路由器"
+		result.LoginAttempted = true
+		result.InitialLogin = true
+		result.addEvent("没有可复用会话，开始登录")
 		if err := c.Login(ctx); err != nil {
-			return PortStatus{}, err
+			result.addEvent("登录失败: %v", err)
+			return result, fmt.Errorf("登录路由器失败: %w", err)
 		}
+		result.addEvent("登录成功")
+	} else {
+		result.addEvent("复用已有会话，跳过登录")
 	}
 
+	result.Stage = "读取网口数据"
+	result.addEvent("请求路由器网口数据")
 	body, err := c.get(ctx, "vueData", "vue_internet_ethport_data", nil)
 	if err != nil {
-		return PortStatus{}, err
+		result.addEvent("读取网口数据失败: %v", err)
+		return result, fmt.Errorf("读取网口数据失败: %w", err)
 	}
+	result.ResponseBytes = len(body)
+	result.addEvent("收到网口数据，响应大小=%d字节", len(body))
 	if isSessionTimeout(body) {
+		result.Stage = "会话过期后重新登录"
 		c.loggedIn = false
+		result.RetriedAfterTimeout = true
+		result.LoginAttempted = true
+		result.InitialLogin = false
+		result.addEvent("路由器返回 SessionTimeout，清除会话并重新登录")
 		if err := c.Login(ctx); err != nil {
-			return PortStatus{}, err
+			result.addEvent("重新登录失败: %v", err)
+			return result, fmt.Errorf("会话过期后重新登录失败: %w", err)
 		}
+		result.addEvent("重新登录成功")
+		result.Stage = "重新读取网口数据"
 		body, err = c.get(ctx, "vueData", "vue_internet_ethport_data", nil)
 		if err != nil {
-			return PortStatus{}, err
+			result.addEvent("重新读取网口数据失败: %v", err)
+			return result, fmt.Errorf("重新读取网口数据失败: %w", err)
 		}
+		result.ResponseBytes = len(body)
+		result.addEvent("重新收到网口数据，响应大小=%d字节", len(body))
 	}
 	if isSessionTimeout(body) {
-		return PortStatus{}, fmt.Errorf("router session timed out")
+		result.Stage = "会话仍然超时"
+		result.addEvent("重新登录后仍然返回 SessionTimeout")
+		return result, fmt.Errorf("路由器会话超时")
 	}
 
+	result.Stage = "解析网口数据"
 	ports, err := ParseEthernetPorts(body)
 	if err != nil {
-		return PortStatus{}, err
+		result.addEvent("解析网口数据失败: %v", err)
+		return result, fmt.Errorf("解析网口数据失败: %w", err)
 	}
-	return FindWANPort(ports, alias)
+	result.AvailablePorts = ports
+	result.addEvent("解析到 %d 个网口", len(ports))
+	result.Stage = "选择 WAN 网口"
+	port, err := FindWANPort(ports, alias)
+	if err != nil {
+		result.addEvent("选择目标网口失败: %v", err)
+		return result, fmt.Errorf("选择目标网口失败: %w", err)
+	}
+	result.Port = port
+	result.Stage = "完成"
+	result.addEvent("命中目标网口: %s", port.Summary())
+	return result, nil
+}
+
+func (r *WANPortResult) addEvent(format string, args ...any) {
+	r.Events = append(r.Events, fmt.Sprintf(format, args...))
 }
 
 func (c *Client) Login(ctx context.Context) error {
@@ -81,7 +141,7 @@ func (c *Client) Login(ctx context.Context) error {
 	if username == "" {
 		initial, err := c.getRaw(ctx, "hiddenScene", "initial_info_json", nil, false)
 		if err != nil {
-			return fmt.Errorf("get initial info: %w", err)
+			return fmt.Errorf("获取初始用户信息失败: %w", err)
 		}
 		username = parseInitialUsername(initial)
 		if username == "" {
@@ -91,14 +151,14 @@ func (c *Client) Login(ctx context.Context) error {
 
 	tokenBody, err := c.getRaw(ctx, "loginsceneData", "login_token_json", nil, false)
 	if err != nil {
-		return fmt.Errorf("get login token: %w", err)
+		return fmt.Errorf("获取登录 token 失败: %w", err)
 	}
 	var token loginTokenResponse
 	if err := json.Unmarshal(tokenBody, &token); err != nil {
-		return fmt.Errorf("parse login token: %w", err)
+		return fmt.Errorf("解析登录 token 失败: %w", err)
 	}
 	if token.LoginToken == "" || token.SessionToken == "" {
-		return fmt.Errorf("router returned an incomplete login token")
+		return fmt.Errorf("路由器返回的登录 token 不完整")
 	}
 
 	c.sessionToken = token.SessionToken
@@ -114,18 +174,18 @@ func (c *Client) Login(ctx context.Context) error {
 
 	loginBody, err := c.post(ctx, "loginData", "login_entry", form)
 	if err != nil {
-		return fmt.Errorf("login request: %w", err)
+		return fmt.Errorf("提交登录请求失败: %w", err)
 	}
 	var login loginResponse
 	if err := json.Unmarshal(loginBody, &login); err != nil {
-		return fmt.Errorf("parse login response: %w", err)
+		return fmt.Errorf("解析登录响应失败: %w", err)
 	}
 	if login.SessionToken != "" {
 		c.sessionToken = login.SessionToken
 	}
 	if !login.LoginNeedRefresh {
-		message := firstNonEmpty(login.LoginErrMsg, login.PromptMsg, "login failed")
-		return fmt.Errorf("router login failed: %s", message)
+		message := firstNonEmpty(login.LoginErrMsg, login.PromptMsg, "登录失败")
+		return fmt.Errorf("路由器登录失败: %s", message)
 	}
 
 	c.username = username
@@ -168,7 +228,7 @@ func (c *Client) do(ctx context.Context, method string, query string, form url.V
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s ?%s 请求失败: %w", method, query, err)
 	}
 	defer resp.Body.Close()
 
@@ -180,7 +240,7 @@ func (c *Client) do(ctx context.Context, method string, query string, form url.V
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("router returned HTTP %d", resp.StatusCode)
+		return nil, fmt.Errorf("%s ?%s 返回 HTTP %d，响应片段=%q", method, query, resp.StatusCode, responseSnippet(respBody))
 	}
 	return respBody, nil
 }
@@ -206,6 +266,14 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func responseSnippet(body []byte) string {
+	text := strings.TrimSpace(string(body))
+	if len(text) > 256 {
+		return text[:256]
+	}
+	return text
 }
 
 func orderedRouterQuery(dataType, tag string, extra url.Values, cacheBust bool) string {

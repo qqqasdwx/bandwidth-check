@@ -35,25 +35,25 @@ func Load() (Config, error) {
 	}
 
 	if cfg.RouterURL == "" {
-		return Config{}, fmt.Errorf("ROUTER_URL is required")
+		return Config{}, fmt.Errorf("ROUTER_URL 必填")
 	}
 	if cfg.RouterPass == "" {
-		return Config{}, fmt.Errorf("ROUTER_PASSWORD is required")
+		return Config{}, fmt.Errorf("ROUTER_PASSWORD 必填")
 	}
 	if cfg.KumaPushURL == "" {
-		return Config{}, fmt.Errorf("KUMA_PUSH_URL is required")
+		return Config{}, fmt.Errorf("KUMA_PUSH_URL 必填")
 	}
 	if err := validateHTTPURL("KUMA_PUSH_URL", cfg.KumaPushURL); err != nil {
 		return Config{}, err
 	}
 	if cfg.MinSpeedMbps <= 0 {
-		return Config{}, fmt.Errorf("MIN_SPEED_MBPS must be positive")
+		return Config{}, fmt.Errorf("MIN_SPEED_MBPS 必须是正数")
 	}
 	if cfg.CheckInterval <= 0 {
-		return Config{}, fmt.Errorf("CHECK_INTERVAL_SECONDS must be positive")
+		return Config{}, fmt.Errorf("CHECK_INTERVAL_SECONDS 必须是正数")
 	}
 	if cfg.HTTPTimeout <= 0 {
-		return Config{}, fmt.Errorf("HTTP_TIMEOUT_SECONDS must be positive")
+		return Config{}, fmt.Errorf("HTTP_TIMEOUT_SECONDS 必须是正数")
 	}
 
 	return cfg, nil
@@ -70,13 +70,13 @@ func getEnv(key, fallback string) string {
 func validateHTTPURL(key, value string) error {
 	parsed, err := url.Parse(value)
 	if err != nil {
-		return fmt.Errorf("%s is invalid: %w", key, err)
+		return fmt.Errorf("%s 无效: %w", key, err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return fmt.Errorf("%s must use http or https", key)
+		return fmt.Errorf("%s 必须使用 http 或 https", key)
 	}
 	if parsed.Host == "" {
-		return fmt.Errorf("%s must include a host", key)
+		return fmt.Errorf("%s 必须包含主机名", key)
 	}
 	return nil
 }

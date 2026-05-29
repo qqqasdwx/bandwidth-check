@@ -28,9 +28,23 @@ func (p PortStatus) Healthy(minSpeedMbps int) bool {
 
 func (p PortStatus) SpeedText() string {
 	if !p.SpeedKnown {
-		return "unknown"
+		return "未知"
 	}
 	return fmt.Sprintf("%d Mbps", p.SpeedMbps)
+}
+
+func (p PortStatus) Summary() string {
+	return fmt.Sprintf("%s(id=%s, alias=%s, 上联=%s, 连接=%s, 速率=%s, 最大速率=%dMbps, 接收=%s, 发送=%s)",
+		p.DisplayName,
+		emptyAsDash(p.InstID),
+		emptyAsDash(p.Alias),
+		boolText(p.Upstream),
+		boolText(p.Connected),
+		p.SpeedText(),
+		p.MaxSpeedMbps,
+		emptyAsDash(p.RecvRate),
+		emptyAsDash(p.SendRate),
+	)
 }
 
 func ParseEthernetPorts(body []byte) ([]PortStatus, error) {
@@ -79,7 +93,7 @@ func ParseEthernetPorts(body []byte) ([]PortStatus, error) {
 		})
 	}
 	if len(ports) == 0 {
-		return nil, fmt.Errorf("no Ethernet ports found in router response")
+		return nil, fmt.Errorf("路由器响应中没有找到以太网口")
 	}
 	return ports, nil
 }
@@ -98,7 +112,7 @@ func FindWANPort(ports []PortStatus, alias string) (PortStatus, error) {
 			return port, nil
 		}
 	}
-	return PortStatus{}, fmt.Errorf("WAN port %q not found", alias)
+	return PortStatus{}, fmt.Errorf("未找到 WAN 网口 %q", alias)
 }
 
 func SpeedIndexToMbps(index int) (int, bool) {
@@ -123,7 +137,7 @@ func SpeedIndexToMbps(index int) (int, bool) {
 func parseObject(body []byte, objectName string) ([]map[string]string, error) {
 	var root xmlRoot
 	if err := xml.Unmarshal(body, &root); err != nil {
-		return nil, fmt.Errorf("parse router XML: %w", err)
+		return nil, fmt.Errorf("解析路由器 XML 失败: %w", err)
 	}
 
 	var records []map[string]string
@@ -155,6 +169,20 @@ func displayAlias(alias string) string {
 
 func normalizePortName(value string) string {
 	return strings.ToUpper(strings.TrimSpace(value))
+}
+
+func emptyAsDash(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "-"
+	}
+	return value
+}
+
+func boolText(value bool) string {
+	if value {
+		return "是"
+	}
+	return "否"
 }
 
 type xmlRoot struct {
