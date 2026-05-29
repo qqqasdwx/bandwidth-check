@@ -26,9 +26,14 @@ WAN_PORT_ALIAS=ETH_WAN
 MIN_SPEED_MBPS=1000
 CHECK_INTERVAL_SECONDS=60
 HTTP_TIMEOUT_SECONDS=10
+LOG_LEVEL=info
+ROUTER_RETRY_COUNT=1
+ROUTER_RETRY_DELAY_MS=300
 ```
 
 必填项是 `ROUTER_URL`、`ROUTER_PASSWORD` 和 `KUMA_PUSH_URL`。不要把真实密码或 Kuma Push URL 提交到 Git。
+
+`LOG_LEVEL` 可设为 `info` 或 `debug`。`info` 只输出每次检查的关键结果；`debug` 会输出路由器登录、读取、解析和网口列表明细。路由器读取失败时会按 `ROUTER_RETRY_COUNT` 做短重试，默认重试 1 次，间隔 300ms；如果已经读到网口降速或断开，不会等待重试，会立即推送异常状态。
 
 ## Docker 运行
 
@@ -44,6 +49,9 @@ docker run -d \
   -e MIN_SPEED_MBPS="1000" \
   -e CHECK_INTERVAL_SECONDS="60" \
   -e HTTP_TIMEOUT_SECONDS="10" \
+  -e LOG_LEVEL="info" \
+  -e ROUTER_RETRY_COUNT="1" \
+  -e ROUTER_RETRY_DELAY_MS="300" \
   ghcr.io/qqqasdwx/bandwidth-check:latest
 ```
 
@@ -103,5 +111,6 @@ ghcr.io/qqqasdwx/bandwidth-check
 
 - 正常：网口已连接，且协商速率 `>= 1000 Mbps`
 - 异常：网口断开、速率未知、速率低于阈值，或路由器读取失败
+- 网口匹配：优先按 `WAN_PORT_ALIAS` 匹配；找不到时回退到路由器标记的上联网口，日志会显示匹配方式
 
 异常时会向 Kuma 推送 `status=down`；正常时推送 `status=up`。

@@ -22,6 +22,11 @@ type PortStatus struct {
 	WanType      string
 }
 
+type PortMatch struct {
+	Port   PortStatus
+	Method string
+}
+
 func (p PortStatus) Healthy(minSpeedMbps int) bool {
 	return p.Connected && p.SpeedKnown && p.SpeedMbps >= minSpeedMbps
 }
@@ -99,20 +104,32 @@ func ParseEthernetPorts(body []byte) ([]PortStatus, error) {
 }
 
 func FindWANPort(ports []PortStatus, alias string) (PortStatus, error) {
+	match, err := FindWANPortMatch(ports, alias)
+	if err != nil {
+		return PortStatus{}, err
+	}
+	return match.Port, nil
+}
+
+func FindWANPortMatch(ports []PortStatus, alias string) (PortMatch, error) {
 	normalizedAlias := normalizePortName(alias)
 	for _, port := range ports {
-		if normalizePortName(port.Alias) == normalizedAlias ||
-			normalizePortName(port.DisplayName) == normalizedAlias ||
-			normalizePortName(port.InstID) == normalizedAlias {
-			return port, nil
+		if normalizePortName(port.Alias) == normalizedAlias {
+			return PortMatch{Port: port, Method: "alias"}, nil
+		}
+		if normalizePortName(port.DisplayName) == normalizedAlias {
+			return PortMatch{Port: port, Method: "display_name"}, nil
+		}
+		if normalizePortName(port.InstID) == normalizedAlias {
+			return PortMatch{Port: port, Method: "inst_id"}, nil
 		}
 	}
 	for _, port := range ports {
 		if port.Upstream {
-			return port, nil
+			return PortMatch{Port: port, Method: "upstream_fallback"}, nil
 		}
 	}
-	return PortStatus{}, fmt.Errorf("未找到 WAN 网口 %q", alias)
+	return PortMatch{}, fmt.Errorf("未找到 WAN 网口 %q", alias)
 }
 
 func SpeedIndexToMbps(index int) (int, bool) {

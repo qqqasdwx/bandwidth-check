@@ -27,6 +27,7 @@ type Client struct {
 type WANPortResult struct {
 	Port                PortStatus
 	AvailablePorts      []PortStatus
+	PortMatchMethod     string
 	SessionReused       bool
 	LoginAttempted      bool
 	InitialLogin        bool
@@ -121,14 +122,15 @@ func (c *Client) WANPortStatus(ctx context.Context, alias string) (WANPortResult
 	result.AvailablePorts = ports
 	result.addEvent("解析到 %d 个网口", len(ports))
 	result.Stage = "选择 WAN 网口"
-	port, err := FindWANPort(ports, alias)
+	match, err := FindWANPortMatch(ports, alias)
 	if err != nil {
 		result.addEvent("选择目标网口失败: %v", err)
 		return result, fmt.Errorf("选择目标网口失败: %w", err)
 	}
-	result.Port = port
+	result.Port = match.Port
+	result.PortMatchMethod = match.Method
 	result.Stage = "完成"
-	result.addEvent("命中目标网口: %s", port.Summary())
+	result.addEvent("命中目标网口: 匹配方式=%s, %s", match.Method, match.Port.Summary())
 	return result, nil
 }
 

@@ -12,3 +12,6 @@ services:
       MIN_SPEED_MBPS: "1000"
       CHECK_INTERVAL_SECONDS: "60"
       HTTP_TIMEOUT_SECONDS: "10"
+      LOG_LEVEL: "info"
+      ROUTER_RETRY_COUNT: "1"
+      ROUTER_RETRY_DELAY_MS: "300"

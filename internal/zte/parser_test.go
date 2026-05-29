@@ -78,6 +78,24 @@ func TestFindWANPortFallsBackToUpstream(t *testing.T) {
 	}
 }
 
+func TestFindWANPortMatchReportsMethod(t *testing.T) {
+	ports, err := ParseEthernetPorts([]byte(sampleEthPortXML))
+	if err != nil {
+		t.Fatalf("ParseEthernetPorts returned error: %v", err)
+	}
+
+	match, err := FindWANPortMatch(ports, "missing")
+	if err != nil {
+		t.Fatalf("FindWANPortMatch returned error: %v", err)
+	}
+	if match.Method != "upstream_fallback" {
+		t.Fatalf("match.Method = %q, want upstream_fallback", match.Method)
+	}
+	if !match.Port.Upstream {
+		t.Fatal("expected fallback match to be upstream")
+	}
+}
+
 func TestSpeedIndexToMbps(t *testing.T) {
 	tests := map[int]int{
 		1: 10,

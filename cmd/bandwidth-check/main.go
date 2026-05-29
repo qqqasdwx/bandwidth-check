@@ -32,7 +32,7 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	log.Printf("启动监控: 路由器=%s, 监控网口=%s, 最低速率=%dMbps, 检查间隔=%s, 请求超时=%s", cfg.RouterURL, cfg.WANPortAlias, cfg.MinSpeedMbps, cfg.CheckInterval, cfg.HTTPTimeout)
+	log.Printf("启动监控: 路由器=%s, 监控网口=%s, 最低速率=%dMbps, 检查间隔=%s, 请求超时=%s, 日志级别=%s, 路由器读取重试=%d次, 重试间隔=%s", cfg.RouterURL, cfg.WANPortAlias, cfg.MinSpeedMbps, cfg.CheckInterval, cfg.HTTPTimeout, cfg.LogLevel, cfg.RouterRetries, cfg.RouterRetryDelay)
 
 	if unhealthy := runCheck(ctx, cfg, routerClient, kumaClient); cfg.RunOnce {
 		if unhealthy {
@@ -57,16 +57,15 @@ func main() {
 
 func runCheck(parent context.Context, cfg config.Config, routerClient *zte.Client, kumaClient *kuma.Client) bool {
 	started := time.Now()
-	log.Printf("开始检查: 目标网口=%s", cfg.WANPortAlias)
+	if cfg.DebugLogging() {
+		log.Printf("开始检查: 目标网口=%s", cfg.WANPortAlias)
+	}
 
 	status := "up"
 	message := ""
 	unhealthy := false
 
-	routerCtx, routerCancel := context.WithTimeout(parent, cfg.HTTPTimeout)
-	result, err := routerClient.WANPortStatus(routerCtx, cfg.WANPortAlias)
-	routerCancel()
-	logRouterResult(result, time.Since(started))
+	result, attempts, err := readRouterWithRetry(parent, cfg, routerClient)
 	port := result.Port
 	if err != nil {
 		status = "down"
@@ -88,8 +87,9 @@ func runCheck(parent context.Context, cfg config.Config, routerClient *zte.Clien
 		message = fmt.Sprintf("%s 协商速率 %d Mbps，状态正常", port.DisplayName, port.SpeedMbps)
 	}
 
-	if err == nil {
-		log.Printf("目标网口状态: %s", port.Summary())
+	logCheckResult(status, message, result, attempts, time.Since(started))
+	if cfg.DebugLogging() || err != nil {
+		logRouterResult(result, time.Since(started))
 	}
 
 	duration := time.Since(started)
@@ -106,10 +106,64 @@ func runCheck(parent context.Context, cfg config.Config, routerClient *zte.Clien
 	return unhealthy
 }
 
+func readRouterWithRetry(parent context.Context, cfg config.Config, routerClient *zte.Client) (zte.WANPortResult, int, error) {
+	maxAttempts := cfg.RouterRetries + 1
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+
+	var result zte.WANPortResult
+	var err error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			if cfg.DebugLogging() {
+				log.Printf("路由器读取重试: 第%d/%d次，等待=%s", attempt, maxAttempts, cfg.RouterRetryDelay)
+			}
+			if !sleepWithContext(parent, cfg.RouterRetryDelay) {
+				return result, attempt - 1, parent.Err()
+			}
+		}
+
+		routerCtx, routerCancel := context.WithTimeout(parent, cfg.HTTPTimeout)
+		result, err = routerClient.WANPortStatus(routerCtx, cfg.WANPortAlias)
+		routerCancel()
+		if err == nil {
+			return result, attempt, nil
+		}
+		if attempt < maxAttempts && cfg.DebugLogging() {
+			log.Printf("路由器读取失败，将重试: 第%d/%d次, 错误=%v", attempt, maxAttempts, err)
+		}
+	}
+	return result, maxAttempts, err
+}
+
+func sleepWithContext(ctx context.Context, duration time.Duration) bool {
+	if duration <= 0 {
+		return true
+	}
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func logCheckResult(status, message string, result zte.WANPortResult, attempts int, elapsed time.Duration) {
+	if result.Port.DisplayName == "" {
+		log.Printf("检查结果: status=%s, msg=%q, 路由器读取次数=%d, 阶段=%s, 会话=%s, 耗时=%s", status, message, attempts, emptyAsDash(result.Stage), sessionSummary(result), elapsed.Round(time.Millisecond))
+		return
+	}
+	log.Printf("检查结果: status=%s, msg=%q, 路由器读取次数=%d, 会话=%s, 匹配方式=%s, 目标网口=%s, 耗时=%s", status, message, attempts, sessionSummary(result), matchMethodText(result.PortMatchMethod), result.Port.Summary(), elapsed.Round(time.Millisecond))
+}
+
 func logRouterResult(result zte.WANPortResult, elapsed time.Duration) {
-	log.Printf("路由器读取完成: 阶段=%s, 会话=%s, 响应大小=%d字节, 解析网口数=%d, 耗时=%s",
+	log.Printf("路由器读取明细: 阶段=%s, 会话=%s, 匹配方式=%s, 响应大小=%d字节, 解析网口数=%d, 耗时=%s",
 		emptyAsDash(result.Stage),
 		sessionSummary(result),
+		matchMethodText(result.PortMatchMethod),
 		result.ResponseBytes,
 		len(result.AvailablePorts),
 		elapsed.Round(time.Millisecond),
@@ -150,4 +204,19 @@ func portSummaries(ports []zte.PortStatus) string {
 		summaries = append(summaries, port.Summary())
 	}
 	return strings.Join(summaries, "; ")
+}
+
+func matchMethodText(method string) string {
+	switch method {
+	case "alias":
+		return "按 alias 命中"
+	case "display_name":
+		return "按显示名称命中"
+	case "inst_id":
+		return "按实例 ID 命中"
+	case "upstream_fallback":
+		return "按上联网口回退命中"
+	default:
+		return "-"
+	}
 }

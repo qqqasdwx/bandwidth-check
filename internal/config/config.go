@@ -10,28 +10,55 @@ import (
 )
 
 type Config struct {
-	RouterURL     string
-	RouterUser    string
-	RouterPass    string
-	KumaPushURL   string
-	WANPortAlias  string
-	MinSpeedMbps  int
-	CheckInterval time.Duration
-	HTTPTimeout   time.Duration
-	RunOnce       bool
+	RouterURL        string
+	RouterUser       string
+	RouterPass       string
+	KumaPushURL      string
+	WANPortAlias     string
+	MinSpeedMbps     int
+	CheckInterval    time.Duration
+	HTTPTimeout      time.Duration
+	LogLevel         string
+	RouterRetries    int
+	RouterRetryDelay time.Duration
+	RunOnce          bool
 }
 
 func Load() (Config, error) {
+	minSpeedMbps, err := getEnvInt("MIN_SPEED_MBPS", 1000)
+	if err != nil {
+		return Config{}, err
+	}
+	checkIntervalSeconds, err := getEnvInt("CHECK_INTERVAL_SECONDS", 60)
+	if err != nil {
+		return Config{}, err
+	}
+	httpTimeoutSeconds, err := getEnvInt("HTTP_TIMEOUT_SECONDS", 10)
+	if err != nil {
+		return Config{}, err
+	}
+	routerRetries, err := getEnvInt("ROUTER_RETRY_COUNT", 1)
+	if err != nil {
+		return Config{}, err
+	}
+	routerRetryDelayMS, err := getEnvInt("ROUTER_RETRY_DELAY_MS", 300)
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
-		RouterURL:     strings.TrimSpace(os.Getenv("ROUTER_URL")),
-		RouterUser:    strings.TrimSpace(os.Getenv("ROUTER_USERNAME")),
-		RouterPass:    os.Getenv("ROUTER_PASSWORD"),
-		KumaPushURL:   strings.TrimSpace(os.Getenv("KUMA_PUSH_URL")),
-		WANPortAlias:  getEnv("WAN_PORT_ALIAS", "ETH_WAN"),
-		MinSpeedMbps:  getEnvInt("MIN_SPEED_MBPS", 1000),
-		CheckInterval: time.Duration(getEnvInt("CHECK_INTERVAL_SECONDS", 60)) * time.Second,
-		HTTPTimeout:   time.Duration(getEnvInt("HTTP_TIMEOUT_SECONDS", 10)) * time.Second,
-		RunOnce:       getEnvBool("RUN_ONCE", false),
+		RouterURL:        strings.TrimSpace(os.Getenv("ROUTER_URL")),
+		RouterUser:       strings.TrimSpace(os.Getenv("ROUTER_USERNAME")),
+		RouterPass:       os.Getenv("ROUTER_PASSWORD"),
+		KumaPushURL:      strings.TrimSpace(os.Getenv("KUMA_PUSH_URL")),
+		WANPortAlias:     getEnv("WAN_PORT_ALIAS", "ETH_WAN"),
+		MinSpeedMbps:     minSpeedMbps,
+		CheckInterval:    time.Duration(checkIntervalSeconds) * time.Second,
+		HTTPTimeout:      time.Duration(httpTimeoutSeconds) * time.Second,
+		LogLevel:         strings.ToLower(getEnv("LOG_LEVEL", "info")),
+		RouterRetries:    routerRetries,
+		RouterRetryDelay: time.Duration(routerRetryDelayMS) * time.Millisecond,
+		RunOnce:          getEnvBool("RUN_ONCE", false),
 	}
 
 	if cfg.RouterURL == "" {
@@ -55,8 +82,21 @@ func Load() (Config, error) {
 	if cfg.HTTPTimeout <= 0 {
 		return Config{}, fmt.Errorf("HTTP_TIMEOUT_SECONDS 必须是正数")
 	}
+	if cfg.LogLevel != "info" && cfg.LogLevel != "debug" {
+		return Config{}, fmt.Errorf("LOG_LEVEL 只能是 info 或 debug")
+	}
+	if cfg.RouterRetries < 0 {
+		return Config{}, fmt.Errorf("ROUTER_RETRY_COUNT 不能是负数")
+	}
+	if cfg.RouterRetryDelay < 0 {
+		return Config{}, fmt.Errorf("ROUTER_RETRY_DELAY_MS 不能是负数")
+	}
 
 	return cfg, nil
+}
+
+func (c Config) DebugLogging() bool {
+	return c.LogLevel == "debug"
 }
 
 func getEnv(key, fallback string) string {
@@ -81,16 +121,16 @@ func validateHTTPURL(key, value string) error {
 	return nil
 }
 
-func getEnvInt(key string, fallback int) int {
+func getEnvInt(key string, fallback int) (int, error) {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
 	parsed, err := strconv.Atoi(value)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("%s 必须是整数，当前值=%q", key, value)
 	}
-	return parsed
+	return parsed, nil
 }
 
 func getEnvBool(key string, fallback bool) bool {
